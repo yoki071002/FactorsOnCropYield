@@ -1,0 +1,818 @@
+---
+title: "Factors Influence on Crop Yield: Statistical Study"
+author: "Chenjie Xu, Simiao Wu, Yutong Qin"
+date: "2025-11-09"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. Dataset
+
+https://www.kaggle.com/datasets/waqi786/climate-change-impact-on-agriculture
+
+```{r datasetup}
+dat = read.csv("climate_change_impact_on_agriculture_2024.csv")
+X = dat$Crop_Yield_MT_per_HA
+X_na = X[!is.na(X)]
+n = length(X_na)
+Xtype = dat$Crop_Type
+Xyear = dat$Year
+Xstra = dat$Adaptation_Strategies
+
+alpha = 0.05
+nmc = 15000
+```
+
+
+
+# 2. Introduction
+
+Climate change has become one of the defining challenges for agricultural productivity and food security. Shifts in temperature, precipitation, and the frequency of extreme weather events disrupt growing seasons and alter crop performance. Understanding how various factors interact with different crop types is critical for developing adaptive agricultural strategies and improving yield stability.
+
+This study investigates the relationship between various variables (such as crop types, year change and adaptation strategies) and crop yield using the “Climate Change Impact on Agriculture 2024” dataset from Kaggle. The official data set contains more than 10,000 data, including 4 categorical variables and 10 numerical variables. The dataset comprises multi-regional and multi-year observations on climate indicators, crop characteristics, and agricultural practices. Its comprehensive structure enables both cross-sectional and longitudinal analyses of how climate variability influences agricultural outcomes.
+
+To address these research questions, the following study employed three statistical approaches: One-factor ANOVA, Repeated-Measures ANOVA, and the Kruskal–Wallis non-parametric test. Each method focuses on a different aspect of yield variation-across crop types, across years within regions, and across adaptation strategies—thereby providing a multidimensional understanding of the factors that shape agricultural productivity under changing climatic conditions in a statistical aspect.
+
+
+
+# 3. Data Analysis
+
+## 3.1 Normality Check (Lilliefors/Kolmogorov-Smirnov Tests)
+
+At the very start, this study examine whether the overall population of crop yield values can be regarded as approximately normal. Establishing normality is essential because upcoming parametric analysis (such as ANOVA) rely on this assumption to ensure the validity of F-statistics and p-values.
+
+However, directly testing the raw yield distribution may be misleading, as it can be influenced by group-level differences. Therefore, instead of testing the raw data, this study evaluates the normality of residuals, that is, the deviations of observed values from their group or model-predicted means. Residual-based normality checks provide a more accurate assessment of whether the underlying model errors satisfy the assumption required for ANOVA.
+
+The Lilliefors test is a modification of the Kolmogorov–Smirnov (KS) test for normality, which adjusts for the fact that both the population mean and standard deviation are estimated from the sample. It provides a composite goodness-of-fit measure suitable for evaluating normality without requiring population parameters.
+
+The test statistic is defined as:
+\begin{align*}
+  KS_{stat} = \max_{k} |F_{k} - \psi_{k}|
+\end{align*}
+where $F_{k}$ is the empirical cumulative distribution function (CDF) of the sample, and $\psi_{k}$ is the theoretical CDF of the standard normal distribution after standardizing by the sample mean and standard deviation.
+
+The hypotheses are:
+\begin{align*}
+  &H_{0}: \text{The residuals are drawn from a normally distributed population} \\
+  &H_{\alpha}: \text{The residuals are not drawn from a normally distributed population}
+\end{align*}
+
+Given the relatively large sample size, the Lilliefors KS test was implemented via Monte Carlo simulation, which generates an empirical reference distribution of the $KS_{stat}$ under $H_{0}$. This approach provides a more accurate critical value than relying on tabulated thresholds.
+
+Since non-parametric test will not be distort by normality, below will generate the Lilliefors test for one-way and rm anova respectively, based on each independent variables.
+
+```{r Lilliefors test}
+set.seed(2025)
+
+lilliefors_ks = function(x, nmc, alpha) {
+  n = length(x[!is.na(x)])
+  if (n < 5) return(list(n = n, KS_obs = NA, KS_crit = NA, p_val = NA))
+  
+  X_s = sort(x)
+  mu_hat = mean(X_s)
+  sigma_hat = sd(X_s)
+  
+  Psi_x = pnorm((X_s - mu_hat) / sigma_hat)
+  F_x = (1:n) / n
+  KS_obs = max(abs(F_x - Psi_x))
+  
+  mc_ks = numeric(nmc)
+  for (i in seq_len(nmc)) {
+    sim = sort(rnorm(n))
+    sim_mu = mean(sim)
+    sim_sd = sd(sim)
+    Psi_sim = pnorm((sim - sim_mu) / sim_sd)
+    F_sim = (1:n) / n
+    mc_ks[i] = max(abs(F_sim - Psi_sim))
+  }
+  
+  KS_crit = quantile(mc_ks, 1 - alpha)
+  p_val_emp = mean(mc_ks >= KS_obs)
+  
+  list(n = n, KS_obs = KS_obs, KS_crit = KS_crit, p_val = p_val_emp)
+}
+```
+
+Following sections display the Lilliefor test result based on the above helper function for One-Way ANOVA and repeated-measure ANOVA respectively.
+
+```{r NormOneANOVA}
+groups = unique(Xtype)
+group_means = numeric(length(groups))
+for (j in 1:length(groups)) {
+  g_name = groups[j]
+  x_g = X[Xtype == g_name]
+  group_means[j] = mean(x_g, na.rm = TRUE)
+}
+
+fitted_values = numeric(length(X))
+for (i in 1:length(X)) {
+  for (j in 1:length(groups)) {
+    if (Xtype[i] == groups[j]) {
+      fitted_values[i] = group_means[j]
+    }
+  }
+}
+
+residuals_oneway = X - fitted_values
+ks_one = lilliefors_ks(residuals_oneway, nmc, alpha)
+cat(sprintf("One-Way_ANOVA: n = %d   KS = %.5f   Critical = %.5f   p = %.4f\n",
+            ks_one$n, ks_one$KS_obs, ks_one$KS_crit, ks_one$p_val))
+```
+
+For the one-way ANOVA, the Lilliefors KS test rejected $H_{0}$, considering its $p$ value is 0, indicating that the crop yield residuals significantly deviate from a normal distribution. This suggests that variability among crop types introduces non-normality in the model residuals. 
+
+Although the one-way ANOVA residuals are not perfectly normal, the large sample size allows the use of the Central Limit Theorem (CLT), which ensures that the ANOVA test statistics remain approximately normally distributed under this circumstance that $n > 10000$. 
+
+```{r NormRMANOVA}
+countries = unique(dat$Country)
+years = unique(Xyear)
+m = length(countries)
+t = length(years)
+yield_mat = matrix(NA, nrow = m, ncol = t)
+
+for (i in 1:m) {
+  for (j in 1:t) {
+    subset_rows = which(dat$Country == countries[i] & dat$Year == years[j])
+    if (length(subset_rows) > 0) {
+      yield_mat[i, j] = mean(X[subset_rows], na.rm = TRUE)
+    }
+  }
+}
+
+row_means = numeric(m)
+for (i in 1:m) {
+  vals = yield_mat[i, ]
+  row_means[i] = mean(vals[!is.na(vals)])
+}
+
+col_means = numeric(t)
+for (j in 1:t) {
+  vals = yield_mat[, j]
+  col_means[j] = mean(vals[!is.na(vals)])
+}
+
+grand_mean = mean(yield_mat[!is.na(yield_mat)])
+
+E = matrix(NA, nrow = m, ncol = t)
+for (i in 1:m) {
+  for (j in 1:t) {
+    if (!is.na(yield_mat[i, j])) {
+      E[i, j] = yield_mat[i, j] - row_means[i] - col_means[j] + grand_mean
+    }
+  }
+}
+
+resids_rm = c()
+for (i in 1:m) {
+  for (j in 1:t) {
+    if (!is.na(E[i, j])) {
+      resids_rm = c(resids_rm, E[i, j])
+    }
+  }
+}
+
+ks_rm = lilliefors_ks(resids_rm, nmc, alpha)
+cat(sprintf("RM_ANOVA: n = %d   KS = %.5f   Critical = %.5f   p = %.4f\n",
+            ks_rm$n, ks_rm$KS_obs, ks_rm$KS_crit, ks_rm$p_val))
+
+```
+
+For the repeated-measures ANOVA, the test failed to reject $H_{0}$ by that the $p = 0.5760 > \alpha = 0.05$, implying that the residuals are approximately normal across years. This indicates that annually yield fluctuations are symmetrically distributed and do not violate the normality assumption.
+
+Therefore, the subsequent ANOVA analyses can still be validly interpreted under parametric assumptions.
+
+Additionally, the figures (Figure 2 below) of distribution perform some sense of normality qualitatively.
+
+```{r Normality Boxplot}
+par(mfrow = c(2, 2))
+crop_types = unique(Xtype)
+for (c in crop_types) {
+  hist(
+    X[Xtype == c],
+    main = paste("Type: ", c),
+    xlab = "Crop Yield (MT/HA)",
+    col = "pink",
+    border = "black"
+  )
+}
+par(mfrow = c(1,1))
+```
+
+Each figure shows the distribution of crop yield across different crop types. The yield distributions for most crops appear approximately symmetric without severe skewness or outliers, supporting the normality assumption for the one-way ANOVA.
+
+
+## 3.2 Outlier Detection (Tietjen-Moore Test)
+
+Meanwhile, before conducting the main analysis, it is important to verify that the dataset does not contain extreme outliers that could distort the results of the subsequent tests. Outliers may arise from data entry errors, measurement anomalies, or genuinely extreme cases. Therefore, this study performs an overall outlier test on the variable crop yield to confirm the integrity of the data distribution.
+
+To test for the presence of multiple potential outliers in a single sample, the Tietjen-Moore (TM) test is applied, considering this test is designed to detect k outliers simultaneously at either or both tails of the distribution. It compares the variability of the full dataset with that of a dataset where the suspected k largest values are removed. The test statistic is defined as:
+\begin{align*}
+  TM_{stat} := \frac{\sum_{k=1}^{n-n_{0}}(x_{k} - \bar x_{or})^2}{\sum_{k=1}^{n}(x_{k} - \bar x)^2}
+\end{align*}
+where $x_{k}$ represents the observations, $\bar x_{or}$ is the mean after removing the top k suspected outliers, and $\bar x$ is the overall sample mean.
+
+The hypothesis of the TM test are:
+\begin{align*}
+  &H_{0}: \text{No outliers are present in the dataset}\\
+  &H_{\alpha}: \text{There exist k or more outliers in the dataset}
+\end{align*}
+
+In this study, since the observed sample size is arbitrarily large ($n > 10000$), it is hard to accurately determine a suitable $k$, and thus Monte Carlo simulation is used to approximate the critical distribution of the TM statistic under the null hypothesis, also since analytical critical values of the TM test depend on both sample size $n$ and $k$.
+
+Monte Carlo simulation provides a data-driven approach by generating a large number of random samples from a normal distribution with the same size as the observed data and calculating their corresponding TM statistics. 
+
+This process yields an empirical null distribution of $TM_{stat}$, allow the estimation of critical cutoff values for each candidate $k$. The observed TM statistic is then compared to these simulated critical thresholds to determine whether any subset of extreme values significantly deviates from the expected variability under normality.
+
+By scanning through a range of $k$ values from 1 to 10, this method ensures that potential multiple outliers at the upper or lower tails are properly detected, even in large samples where the exact number of suspects is unknown. The following section presents the Monte Carlo procedure, computed TM statistics, and their comparison with simulated critical values to assess whether any statistically significant outliers exist in the overall crop yield data.
+
+```{r MC + TM test}
+set.seed(2025)
+
+simulate_TM = function(n, k) {
+  Xs = rnorm(n)
+  abs_dev = abs(Xs - mean(Xs))
+  idx = order(abs_dev, decreasing = TRUE)[1:k]
+  trimmed = Xs[-idx]
+  TM_val = sum((trimmed - mean(trimmed))^2) / sum((Xs - mean(Xs))^2)
+  return(TM_val)
+}
+
+critical_val = numeric(10)
+for (k in 1:10) {
+  TM_sim = replicate(nmc, simulate_TM(length(X_na), k))
+  critical_val[k] = quantile(TM_sim, alpha)
+}
+
+TM_obs = numeric(10)
+for (k in 1:10) {
+  abs_dev = abs(X_na - mean(X_na))
+  idx = order(abs_dev, decreasing = TRUE)[1:k]
+  trimmed = X_na[-idx]
+  TM_obs[k] = sum((trimmed - mean(trimmed))^2) / sum((X_na - mean(X_na))^2)
+}
+
+par(mar = c(5,5,4,2))
+ymin = min(c(TM_obs, critical_val)) - 0.005
+ymax = max(c(TM_obs, critical_val)) + 0.005
+plot(1:10, TM_obs, type = "b", pch = 19, col = "skyblue",
+xlim = c(0.5, 10.5),
+ylim = c(ymin, ymax),
+xlab = "Number of Suspected Outliers (k)",
+ylab = "TM Statistic",
+main = "Figure 2: Observed TM stat VS. Critical Value")
+
+lines(1:10, critical_val, type = "b", col = "pink", lty = 2, pch = 17)
+text(1:10, TM_obs + 0.001, labels = round(TM_obs, 4), col = "skyblue", cex = 0.8, pos = 3)
+text(1:10, critical_val - 0.001, labels = round(critical_val, 4), col = "pink", cex = 0.8, pos = 1)
+
+legend("bottomleft",
+        legend = c("Observed TM", "Critical Value (5%)"),
+        col = c("skyblue", "pink"),
+        lty = c(1, 2),
+        pch = c(19, 17),
+        bty = "n")
+```
+
+None of the observed TM statistics fell below the corresponding critical thresholds across all tested values of $k$, and since the rejection region is left-tailed for TM test, indicating no statistically significant outliers in the overall crop yield data.
+
+Therefore, we fail to reject $H_{0}$, suggesting that the dataset does not contain extreme observations that would distort the subsequent analysis. Considering the comprehensive structure of this dataset, although some subgroups may display outliers, these do not represent statistical outliers at the whole population level. Such within-group extremes are likely the result of regional or management variability and do not violate the overall assumptions required for the subsequent statistical tests.
+
+In summary, the overall data distribution satisfied the assumption of being free from significant outliers, and all following analysis are conducted using the complete dataset without exclusion of any observations.
+
+
+
+# 4. M1: One-Way ANOVA
+
+This test examines whether the mean crop yield differs significantly among different crop types.
+
+At the very start, consider the assumptions for one-way ANOVA. Section 3 already shows the normality and makes the necessary check on outliers. For the independence between and within samples, since each crop type represents a distinct population group, and no overlap occurs between groups; each record corresponds to an unique country-year-crop combination, and no repeated measures of the same observation are included, these two independence assumptions are guaranteed. And for assumption on homoscedasticity, this study will follows with a Bartlett's Test to test whether the population variances are equal across crop type groups.
+
+## 4.1 Bartlett’s Test of Variances
+
+The Bartlett’s test evaluates whether the population variances are equal across crop type groups. And it's assumptions are similar to one-way ANOVA except homoscedasticity, so this dataset already fulfill the requirements. The hypotheses are:
+\begin{align*}
+  &H_0: \sigma_1^2 = \sigma_2^2 = \sigma_3^2 = \cdots = \sigma_g^2\\
+  &H_a: \exists\, j \neq k \text{ such that } \sigma_j^2 \neq \sigma_k^2
+\end{align*}
+
+The Bartlett statistic is computed as:
+\begin{align*}
+  BA_{stat} = \frac{v\cdot\ln(s^2_{p})-[v_{1}\cdot\ln(s^2_{1}) + \cdots + v_{g}\cdot\ln(s^2_{g})]}{1 + \frac{1}{3\cdot(g-1)}\cdot[(\frac{1}{v_{1}} + \cdots + \frac{1}{v_{g}}) - \frac{1}{v}]}
+\end{align*}
+where $v = n-g$ and $v_{j} = n_{j} - 1$, and $s^2_{p}$ is the pooled sample variance.
+
+The resulting Bartlett test statistics follows a chi-square distribution.
+
+```{r Bartlett}
+var_yield = "Crop_Yield_MT_per_HA"
+var_group = "Crop_Type"
+
+Y = dat[[var_yield]]
+G = as.factor(dat[[var_group]])
+
+yield_by_crop = split(Y, G)
+
+mean_j = sapply(yield_by_crop, function(x) mean(x, na.rm = TRUE))
+sd_j   = sapply(yield_by_crop, function(x) sd(x, na.rm = TRUE))
+var_j  = sapply(yield_by_crop, function(x) var(x, na.rm = TRUE))
+n_j    = sapply(yield_by_crop, function(x) sum(!is.na(x)))
+v_j    = n_j - 1
+
+n_total = sum(n_j)
+v_total = sum(v_j)
+g = length(n_j)
+
+s2_pooled = sum(v_j * var_j) / v_total
+
+C = 1 + (1 / (3 * (g - 1))) * (sum(1 / v_j) - 1 / v_total)
+
+T_bartlett = (v_total * log(s2_pooled) - sum(v_j * log(var_j))) / C
+
+p_value_bartlett = 1 - pchisq(T_bartlett, df = g - 1)
+
+cat("Bartlett Test Stat =", round(T_bartlett, 4), "\n")
+cat("Degrees of freedom =", g-1, "\n")
+cat("P-value =", round(p_value_bartlett, 5), "\n\n")
+```
+
+Since the p-value is much greater than the conventional significance level $\alpha = 0.05$, there is insufficient evidence to reject the null hypothesis of equal variances. This indicates that the assumption of homogeneity of variances across crop types is not violated, and therefore the use of a standard one-way ANOVA (homoschedastic) is appropriate.
+
+
+## 4.2 Confidence Intervals
+
+We proceed to estimate and visualize the mean yield for each crop type with associated 95% confidence intervals. These intervals summarize both the central tendency and the variability of yields, providing an intuitive measure of uncertainty for each crop type’s mean.
+
+```{r Confidence Interval}
+g = length(unique(Xtype))
+
+xbarbar = mean(X, na.rm = TRUE)
+s2all = var(X, na.rm = TRUE)
+
+group_means = tapply(X, Xtype, mean, na.rm = TRUE)
+group_vars = tapply(X, Xtype, var,  na.rm = TRUE)
+group_n = tapply(X, Xtype, function(x) sum(!is.na(x)))
+
+n = sum(group_n)
+v = sum(group_n - 1)
+
+SSM = sum(group_n * (group_means - xbarbar)^2)
+SSE = sum((group_n - 1) * group_vars)
+SST = s2all * (n - 1)
+
+MSM = SSM / (g - 1)
+MSE = SSE / (n - g)
+
+df_error = n - g
+t_crit = qt((1 - alpha)/2, df = df_error)
+
+se_means = sqrt(MSE / group_n)
+ci_lower = group_means - t_crit * se_means
+ci_upper = group_means + t_crit * se_means
+
+ci_table = data.frame(
+Crop_Type  = names(group_means),
+Mean_Yield = round(group_means, 3),
+Lower_95   = round(ci_lower, 3),
+Upper_95   = round(ci_upper, 3),
+row.names  = NULL
+)
+
+print(ci_table)
+```
+
+The 95% confidence intervals for each crop type’s mean yield overlap considerably, implying that yield differences across crop types are not statistically significant. The following section evaluates the mean yield for each crop type quantitatively through one-way ANOVA.
+
+
+## 4.3 One-Way ANOVA
+
+Given that the Bartlett’s test indicates no significant differences in variance among crop types ($p = 0.7047 > \alpha = 0.05$), the assumption of homogeneity of variances holds. Therefore, it is appropriate to proceed with a standard one-way ANOVA to examine whether the mean crop yields differ significantly across crop types. This analysis will allow us to determine if crop type exerts a statistically significant influence on agricultural productivity, as measured by Crop_Yield_MT_per_HA.
+
+Let $X$ denote yield (crop_yield_MT_per_HA), and there is in total $g$ different crop types as grouping factors. There exist several distinct crop types in this dataset such as corn, fruits, rice, and others. We consider the null hypothesis and alternative hypothesis:
+\begin{align*}
+  &H_0: \mu_1 = \mu_2 = \cdots = \mu_g\\
+  &H_a: \exists\, j \neq k \text{ such that } \mu_j \neq \mu_k
+\end{align*}
+where $\mu_j = \mathbb{E}(Y \mid \text{Crop Type} = j)$.
+
+To construct the one-way ANOVA $F$-statistic, we decompose the total variability into between-group and within-group sums of squares.
+Let $n_{j}$ be the sample size in group $j$, $\bar y_{j}$ is the mean of group $j$, and $\bar{\bar{y}}$ is the grand mean.
+Then
+\begin{align*}
+  SSM &= \sum_{j=1}^g n_j\left(\bar y_j - \bar{\bar y}\right)^2\\
+  SSE &= \sum_{j=1}^g (n_j - 1)s_j^2\\
+  SST &= SSM + SSE
+\end{align*}
+where $s_{j}^2$ is the sample variance in group $j$.
+
+The mean squares and test statistic are given by
+\begin{align*}
+  MSM &= \frac{SSM}{g-1}\\
+  MSE &= \frac{SSE}{n-g}
+\end{align*}
+
+A one-factor ANOVA is then performed to test whether the mean crop yield differs significantly across crop types. Considering the standard ANOVA F-statistic formula:
+\begin{align*}
+  F = \frac{MSM}{MSE}.
+\end{align*}
+
+Considering the computation of total and mean squares in section 4.2, the following section outlines the computation of the ANOVA test statistic, associated $p$-value, and the interpretation of results.
+
+```{r One-Way-ANOVA}
+Fstat = MSM / MSE
+p_value_anova = pf(Fstat, g - 1, n - g, lower.tail = FALSE)
+
+cat("ANOVA Test Stat =", round(Fstat, 4), "\n")
+cat("P-value =", round(p_value_anova, 5), "\n\n")
+```
+
+The result of this ANOVA test is $F_{stat} = 1.4774$ with an associated $p$-value $= 0.1498$. Since the $p$-value is greater than the conventional significance level $\alpha = 0.05$, this study does not have sufficient evidence to reject the null hypothesis. Therefore, we fail to reject $H_{0}$, indicating that there is no statistically significant difference in the mean crop yields among the different crop types. In other words, based on the available data, crop type does not appear to have a significant effect on crop yield at the global level.
+
+
+## 4.4 Boostrap Sampling of the ANOVA F-statistic
+
+While confidence intervals provide pointwise inference for mean yields, it is also important to validate the overall stability of the ANOVA inference. To this end, a bootstrap analysis of the $F$-statistic is performed below to assess the robustness of the model conclusions without relying on strict distributional assumptions.
+
+```{r Bootstraping}
+set.seed(2025)
+nboot = 10000
+
+n = length(X)
+myindex = seq(1, n, 1)
+myF = c()
+
+for(k in 1:nboot){
+  sboot = sample(myindex, n, replace = TRUE)
+  
+  Xboot = X[sboot]
+  Yboot = Xtype[sboot]
+  
+  group_means_b = tapply(Xboot, Yboot, mean, na.rm = TRUE)
+  group_vars_b = tapply(Xboot, Yboot, var,  na.rm = TRUE)
+  group_n_b = tapply(Xboot, Yboot, function(x) sum(!is.na(x)))
+  
+  g_b = length(group_n_b)
+  n_b = sum(group_n_b)
+  
+  xbarbar_b = mean(Xboot, na.rm = TRUE)
+  
+  SSM_b = sum(group_n_b * (group_means_b - xbarbar_b)^2)
+  SSE_b = sum((group_n_b - 1) * group_vars_b)
+  MSM_b = SSM_b / (g_b - 1)
+  MSE_b = SSE_b / (n_b - g_b)
+  
+  F_b = MSM_b / MSE_b
+  myF = c(myF, F_b)
+}
+
+F_CI = quantile(myF, c(alpha, 1 - alpha))
+
+cat("Observed F-stat =", round(Fstat, 4), "\n")
+cat("Bootstrap", (1 - alpha)*100, "% CI for F: [",
+round(F_CI[1], 4), ",", round(F_CI[2], 4), "]\n")
+
+hist(myF,
+main = "Figure 3: Bootstrap distribution of ANOVA F-statistic",
+xlab = "Bootstrap F values",
+xlim = c(0, 8))
+abline(v = Fstat, lwd = 2)
+```
+
+The bootstrap distribution of $F$ centers near the observed value, and its 95% confidence interval includes the theoretical result, supporting the robustness of the conclusion that crop type has no statistically significant effect on crop yield.
+
+
+
+# 5. M2: Repeated-Measures ANOVA
+
+This test examines a repeated-measures ANOVA (RM-ANOVA) analysis of crop yield across multiple countries over years. The hypothesis are formulated as follows:
+\begin{align*}
+  &H_0:\mu_1 = \mu_2 = \cdots = \mu_g\\
+  &H_a:\text{At least one } \mu_j \text{ is different}
+\end{align*}
+where $\mu_j = \mathbb{E}(Y_{ij} \mid \text{Year} = j)$ 
+
+## 5.1 Visualization
+
+Figure 3 below visualizes the average crop yield trend across years. The yield level fluctuates short term but remains relatively stable over time, suggesting that large interannual differences are unlikely—consistent, and this study will varify it with the subsequent RM-ANOVA result.
+
+```{r RMline}
+avg_year = aggregate(Crop_Yield_MT_per_HA ~ Year, data = dat, mean, na.rm = TRUE)
+avg_year$Year = as.numeric(as.character(avg_year$Year))
+avg_year = avg_year[order(avg_year$Year), ]
+plot(
+  avg_year$Year, avg_year$Crop_Yield_MT_per_HA,
+  type = "b",
+  pch = 19,
+  cex = 0.5,
+  lwd = 2,
+  col = "lightpink",
+  xlab = "Year",
+  ylab = "Average Crop Yield (MT/HA)",
+  main = "Figure 4: Average Crop Yield Over Years"
+)
+```
+
+Before the test, it's important to check the assumptions for RM-ANOVA, including the normality of groups, independence within groups, and sphericity between groups.
+
+Given that the sample size in this study is sufficiently large, the assumption of normality can be reasonably justified based on the Central Limit Theorem, as well as the result of section 3.1. To address the assumption of independence within groups, the crop yield data were reorganized and averaged by year and country, ensuring that each observation within a group represents an independent mean. Sphericity refers to the equality of variances of the differences between all pairs of related conditions. Below is the mauchly test conducted to determines whether the covariance matrix meets the condition of sphericity.
+
+
+## 5.2 Mauchly Test for Sphericity
+
+Suppose that we aim to evaluate whether the assumption of sphericity holds for the within-subject factor Year in a repeated-measures ANOVA (RM ANOVA) analysis of crop yield across multiple countries. The hypotheses are formulated as follows:
+\begin{align*}
+  &H_0: \text{The covariance matrix of the repeated measures satisfies sphericity.}\\
+  &H_a: \text{The covariance matrix of the repeated measures violates sphericity.}
+\end{align*}
+
+To test this assumption, we compute Mauchly’s $W$ statistic defined as:
+\begin{align*}
+  W = \frac{|\Sigma|}{\left( \dfrac{\mathrm{tr}(\Sigma)}{g} \right)^{g}}
+\end{align*}
+where $\sum$ represents the sample covariance matrix of the repeated measures and $g$ represents the number of years.
+
+The corresponding test statistic follows a $\chi^2$ distribution with $v = \frac{g*(g-1)}{2}$ degrees of freedom under the null hypothesis, which as shown below:
+\begin{align*}
+  M = -(n - 1)\ln W
+\end{align*}
+
+When the result of Mauchly’s test indicates a significant deviation from sphericity, the standard $F$-test in the RM ANOVA is no longer valid. The Greenhouse–Geisser correction is applied to adjust the degrees of freedom, producing a more conservative test. The $\varepsilon_{\mathrm{GG}}$ is calculated as:
+\begin{align*}
+  \varepsilon_{\mathrm{GG}} = \frac{[\mathrm{tr}(\hat{\Sigma}_c)]^2}{(g-1)*\mathrm{tr}[(\hat{\Sigma}_c)^2]}
+\end{align*}
+where $\hat{\sum}_c$ refers to the covariance matrix after applying the centering transformation with matrix $c$.
+
+The corrected degrees of freedom are used to recalculate the $F_{\text{stat}}$, yielding the Greenhouse Geisser adjusted $p$-value, which ensures that the inference on the effect of Year remains statistically valid even when the assumption of sphericity is violated.
+
+```{r Sphericity}
+agg = data.frame()
+
+for (c in years) {
+  for (s in countries) {
+    ss = subset(dat, Year == c & Country == s)
+    if (nrow(ss) > 0) {
+      mean_yield = mean(ss$Crop_Yield_MT_per_HA, na.rm = TRUE)
+      agg = rbind(agg, data.frame(Year = c, 
+                                  Country = s, 
+                                  Crop_Yield_MT_per_HA = mean_yield))
+    }
+  }
+}
+
+wide = reshape(agg, idvar = "Country", timevar = "Year", direction = "wide")
+year_cols = names(wide)[names(wide) != "Country"]
+yield_matrix = as.matrix(wide[, year_cols, drop = FALSE])
+
+yield_matrix = yield_matrix[, colSums(is.na(yield_matrix)) == 0, drop = FALSE]
+yield_matrix = yield_matrix[, apply(yield_matrix, 2, var) > 0, drop = FALSE]
+
+if (nrow(yield_matrix) <= ncol(yield_matrix)) {
+  ord = order(apply(yield_matrix, 2, var), decreasing = TRUE)
+  yield_matrix = yield_matrix[, ord[seq_len(nrow(yield_matrix)-1)], drop = FALSE]
+}
+
+X_m = yield_matrix
+n_m = nrow(X_m)
+g_m = ncol(X_m)
+sighatx = var(X_m)
+tra = sum(diag(sighatx))
+
+W = det(sighatx) / ( (tra/g_m)^g_m )
+
+Mstat = -(n_m-1) * log(W)
+
+df = g_m*(g_m-1)/2
+
+Mcrit = qchisq(1-alpha, df)
+p_val = 1 - pchisq(Mstat, df)
+
+cat("Mauchly: g =", g_m, " n =", n_m, " W =", round(W, 6),
+    " M =", round(Mstat, 6), " df =", df, " p =", format.pval(p_val), "\n")
+```
+
+Because the $p$-value of Mauchly’s test was smaller than 0.05, the assumption of sphericity was violated, leading to the rejection of the null hypothesis. Therefore, the Greenhouse–Geisser epsilon was applied to adjust the degrees of freedom in the repeated-measures ANOVA to obtain a more accurate and conservative result.
+
+
+## 5.3 RM-ANOVA
+
+To construct the RM ANOVA $F$-statistic, we decompose the total variability into between-group and within-group sums of squares.
+
+Let $n_{j}$ be the sample size in group $j$, $\bar x_{i}$ is the mean of group $i$,$\bar x_{j}$ is the mean of group $j$, $\bar{\bar{x}}$ is the grand mean,$s^2_{all}$ is the standard deviation of the population. Then
+\begin{align*}
+  SSM &= \sum_{j=1}^g n_j\left(\bar x_j - \bar{\bar x}\right)^2\\
+  SSE &= \sum_{i=1}^n\sum_{j=1}^g (x_{ij}-\bar x_i-\bar x_j+\bar{\bar x})^2\\
+  SST &= s^2_{all}\cdot(ng-1)
+\end{align*}
+
+The mean squares and test statistic are given by
+\begin{align*}
+  MSM &= \frac{SSM}{g - 1} \\
+  MSE &= \frac{SSE}{(n - 1)(g - 1)}
+\end{align*}
+
+This analysis treats each country as a repeated-measures subject, observed across multiple years to evaluate temporal changes in crop yield. Within each country, the mean crop yield is calculated for each year by averaging all available records across crop types. This procedure produces one representative yield value per country per year, forming a balanced within-subject dataset. If a country lacks yield data for a specific year, that year is excluded from the repeated-measures structure to maintain the integrity of the analysis and the assumption of independence across countries.
+
+RM ANOVA is then performed to test whether the mean crop yield differs significantly across years within each country. Considering the standard ANOVA $F$-statistic formula:
+\begin{align*}
+  F = \frac{MSM}{MSE}
+\end{align*}
+
+```{r RM-ANOVA}
+xbarj = colMeans(yield_matrix)
+xbari = rowMeans(yield_matrix)
+xbarbar = mean(yield_matrix)
+s2all = var(yield_matrix)
+
+SST = s2all*(n_m*g_m-1)
+MST = SST/(n_m*g_m-1)
+
+SSM = n_m*sum((xbarj - xbarbar)^2)
+MSM = SSM/(g_m-1)
+
+SSS = g_m*sum((xbari - xbarbar)^2)
+MSS = SSS/(n_m-1)
+
+E = yield_matrix - matrix(xbari, n_m, g_m, byrow = FALSE) -
+    matrix(xbarj, n_m, g_m, byrow = TRUE) + xbarbar
+SSE = sum(E^2)
+MSE = SSE/((n_m-1)*(g_m-1))
+
+Fstat = MSM/MSE
+p = pf(Fstat,g_m-1,(n_m-1)*(g_m-1))
+
+sighatx = cov(yield_matrix)
+g_sig = ncol(sighatx)
+C = diag(g_sig) - matrix(1, g_sig, g_sig) / g_sig
+
+sighatc = C%*%sighatx%*%C
+trace_val = sum(diag(sighatc))
+trace_sq  = sum(diag(sighatc %*% sighatc))
+
+eps_GG = (trace_val^2) / ( (g_m - 1) * trace_sq )
+vm = eps_GG*(g_m-1)
+ve = eps_GG*(g_m-1)*(n_m-1)
+p_modified = pf(Fstat, vm, ve, lower.tail = FALSE)
+
+cat("RM ANOVA: Fstat =", Fstat, " p =", format.pval(p), " p_modified =", format.pval(p_modified), "\n")
+```
+
+The analysis showed that the effect of Year on crop yield was not statistically significant, with an uncorrected $F = 0.365$ and $p = 0.0645$. After applying the Greenhouse–Geisser correction, the adjusted $p$-value increased to 0.8603 confirming that the difference in mean crop yield across years was not significant.
+
+
+
+# 6. M3: Non-Parametric Method: Kruskal–Wallis Test
+
+This test examines whether different Adaptation Strategies are associated with statistical differences in Crop Yield (crop_yield_MT_per_HA). There exists five different adaptation strategies in this dataset: crop rotation (CR), drought-resistant crops (DRC), organic farming (OF), water management (WM), and no adaptation (NA). Having null and alternative hypothesis as shown below:
+\begin{align*}
+  &H_0: F_{CR} = F_{DRC} = F_{NA} = F_{OF} = F_{WM}\\
+  &H_a: \exists\enspace i, j\quad\text{such that}\quad F_{i} \neq F_{j}
+\end{align*}
+
+## 6.1 Assumptions and data overview
+
+The original dataset has a hierarchical structure: country, region, crop type, year; multiple observations occurred per country across regions, crop types, and years. Since one of the assumption of Kruskal-Wallis Test is independence within/between sample, this method treat each country as an independent observation unit, and aggregate crop yield within that country for each adaptation strategy.
+
+Specifically, for each country, this method compute the average crop yield across all records sharing the same adaptation strategy for each country. This approach yields one representative yield value per country per adaptation strategy. If a country doesn't apply a particular strategy, it contributes 0 observation for that group.
+
+Before conducting the KW-test, this test have to ensure the key assumptions. The independence of observation has been addressed by aggregating yields within each country and treating each country as a separate observational unit, ensuring that no repeated measures or within-country dependencies remain in the data. The dependent variable for this test is crop yield, which is a continuous data that can be meaningfully ranked. 
+
+```{r Dataagg}
+strategies = unique(dat$Adaptation_Strategies)
+agg2 = data.frame()
+
+for (c in countries) {
+  for (s in strategies) {
+    ss = subset(dat, Country == c & Adaptation_Strategies == s)
+    if (nrow(ss) > 0) {
+      mean_yield = mean(ss$Crop_Yield_MT_per_HA, na.rm = TRUE)
+      agg2 = rbind(agg2, data.frame(Country = c, 
+                                  Adaptation_Strategies = s, 
+                                  Crop_Yield_MT_per_HA = mean_yield))
+    }
+  }
+}
+
+agg_data = agg2
+```
+
+Meanwhile, although KW-test does not assume normality or equal variances, it assumes that the underlying distributions of groups have a similar shape. If distributions differ in shape, significant results may reflect shape differences rather than median shifts. Visual checks using boxplots were performed to confirm roughly comparable distribution shapes among adaptation strategy groups.
+
+```{r KWbox}
+par(mar = c(5,10,4,2))
+boxplot(
+  Crop_Yield_MT_per_HA ~ Adaptation_Strategies,
+  data = agg_data,
+  main = "Figure 5: Distribution of Crop Yield by Adaptation Strategy",
+  ylab = "",
+  xlab = "Crop Yield (MT/HA)",
+  col = "pink",
+  border = "black",
+  outline = TRUE,
+  las = 1,
+  cex.axis = 0.9,
+  horizontal = TRUE
+)
+```
+
+The box plot visualization from figure 4 supports the assumption of similar distributional shapes across groups, as the spread and symmetry of crop yield distributions under different adaptation strategies appear comparable. Although we saw single outliers appear on some strategies, considering in section 3 we already shows on the whole population point of view there do not have extreme cases that will distort the test result, so these outliers may just due to natural difference between the technology and policy of different countries. And thus we will ignore those outliers and keep the dataset as same for KW test. Therefore, the assumptions underlying the KW test are considered to be met.
+
+
+## 6.2 KW Test
+
+A Kruskal-Wallis Test is conducted then to evaluate whether the distribution of crop yield differs significantly across adaptation strategy groups. Considering the standard K-W Test statistic formula: 
+\begin{align*}
+  KW_{stat} := (n-1)\cdot\frac{\sum_{j=1}^g[n_{j}(\bar R_{j} - \bar{\bar{R}} )^2]}{\sum_{j=1}^g\sum_{i=1}^{n_{j}}(R_{ij} - \bar{\bar{R}})^2}
+\end{align*}
+
+In this context, $g$ represents the number of adaptation strategy groups, $n_{j}$ is the number of countries that adopted the $j^{th}$ strategy, $R_{ij}$ denotes the rank of the $i^{th}$ country's crop yield within the overall sample, $\bar R_{j}$ is the mean rank of the $j^{th}$ strategy group, and $\bar{\bar{R}}$ is the grand mean rank across all observations. Together, these components quantify the extent to which the ranked crop yields differ among adaptation strategies across countries.
+
+```{r kw test}
+L = split(agg_data$Crop_Yield_MT_per_HA, agg_data$Adaptation_Strategies)
+nj = sapply(L, length)
+n = sum(nj)
+g = length(L)
+sall = unlist(L)
+idx = rep(names(L), times = nj)
+rall = rank(sall, ties.method = "average")
+rj = split(rall, idx)
+
+Tj = sapply(rj, sum)
+Rbarj = Tj / nj
+Rbarbar = mean(rall)
+
+KWo_stat = (n - 1) * sum(nj * (Rbarj - Rbarbar)^2) / sum((rall - Rbarbar)^2)
+
+df = g - 1
+p_value = 1 - pchisq(KWo_stat, df)
+
+cat("KW statistic (standard formula) =", round(KWo_stat, 4), "\n")
+cat("Degrees of freedom =", df, "\n")
+cat("P-value =", round(p_value, 4), "\n\n")
+```
+
+The result of this test statistic is $KW_{stat} = 6.8066$ with $df = 4$ and associated $pvalue = 0.1465$. Since the p value is greater than the conventional significance level $\alpha = 0.05$, this study doesn't have enough evidence to reject the null hypothesis, and thus fail to reject $H_{0}$, indicating there is no statistically significant difference in the distribution of crop yields across the five different adaptation strategies. In other words, based on the available data, the choice of adaptation strategy does not appear to have a significant effect on crop yield at the global level.
+
+
+## 6.3 Monte Carlo Simulation
+
+While the standard Kruskal-Wallis test provides a theoretical chi-square approximation for the distribution of the test statistic under the null hypothesis, to complement the classical KW test and to assess the robustness of the results, a Monte Carlo simulation is conducted. By repeatedly shuffling the adaptation strategy labels among countries and recalculating the KW statistic, we can generate an empirical null distribution and visually and statistically compare it with the theoretical chi-square distribution. This approach provides additional insight into the reliability of the p-value obtained from the standard test.
+
+```{r MC Sim}
+set.seed(2025)
+
+yields = agg_data$Crop_Yield_MT_per_HA
+groups = agg_data$Adaptation_Strategies
+n = length(yields)
+g = length(unique(groups))
+df = g - 1
+
+KW_sim = numeric(nmc)
+
+for (k in 1:nmc) {
+  shuffled = sample(groups)
+  L = split(yields, shuffled)
+  nj = sapply(L, length)
+  rall = rank(unlist(L))
+  idx = rep(names(L), times = nj)
+  rj = split(rall, idx)
+  Tj = sapply(rj, sum)
+  Rbarj = Tj / nj
+  Rbarbar = mean(rall)
+  KW_val = (n - 1) * sum(nj * (Rbarj - Rbarbar)^2) / sum((rall - Rbarbar)^2)
+  KW_sim[k] = KW_val
+}
+
+chi_x = seq(0, max(KW_sim), length.out = 300)
+chi_y = dchisq(chi_x, df = df)
+
+hist(KW_sim, breaks = 40, freq = FALSE,
+     main = "Figure 6: Monte Carlo Distribution vs Chi-square(df=4)",
+     xlab = "KW Statistic",
+     col = "pink", border = "lightblue")
+lines(chi_x, chi_y, col = "black", lwd = 2)
+abline(v = KWo_stat, col = "darkred", lwd = 2, lty = 2)
+legend("topright", legend = c("Monte Carlo", "Chi-square(4)", "Observed KW"),
+       col = c("lightpink", "lightblue", "black"), lwd = c(10, 2, 2), bty = "n")
+
+mean_MC = mean(KW_sim)
+var_MC  = var(KW_sim)
+
+cat("Empirical Mean =", round(mean_MC, 3), "\n")
+cat("Empirical Var  =", round(var_MC, 3), "\n")
+cat("Chi-square Mean =", df, ", Var =", 2*df, "\n")
+```
+
+The Monte Carlo simulation shows that the empirical distribution of $KW_{stat}$ has a mean of approximately 3.956 and a variance of 7.292, which is reasonably close to the theoretical chi-square distribution with $df = 4$ (mean = 4, variance = 8). The histogram in Figure 5 illustrates that the empirical distribution largely aligns with the theoretical $\chi^{2}_{(4)}$ curve. The observed KW statistic ($KW_{obs} = 6.8066$) lies within the upper tail of the simulated null distribution, indicating that the probability of observing such a value under the null hypothesis is not extreme. This confirms the previous conclusion from the standard Kruskal-Wallis test: there is no statistically significant difference in crop yields across the five adaptation strategies.
+
+
+
+# 7. Conclusion
+
+This study examined the effects of crop type, year-to-year variation, and adaptation strategy on crop yield using three complementary statistical approaches: One-way ANOVA, Repeated-Measures ANOVA, and the Kruskal–Wallis non-parametric test. Prior to running the ANOVA procedures, an outlier test and the Lilliefors normality test confirmed that the dataset contained no extreme outliers and that crop yield followed an approximately normal distribution, satisfying assumptions for parametric testing.
+
+The One-way ANOVA produced $p = 0.150$, indicating that mean crop yields did not differ significantly across crop types. The Repeated-Measures ANOVA resulted in 
+$p = 0.0645$, and after applying the Greenhouse–Geisser correction for sphericity, the adjusted $p = 0.140$, again showing no statistically significant year-to-year change in yield. The Kruskal–Wallis test also revealed no significant differences across strategies, which produce the result that $KW = 6.8066$,  $p = 0.146$.
+
+Collectively, these results show that none of the examined factors—crop type, year variation, or adaptation strategy—produced statistically significant changes in crop yield. In other words, within the observed dataset, crop yield remained relatively stable regardless of biological (crop type), temporal (year), or management (adaptation strategy) differences. A possible reason for this stability could be that broader environmental influences, such as regional weather conditions or soil quality, may overshadow the effects of individual crop management decisions in a global dataset.
